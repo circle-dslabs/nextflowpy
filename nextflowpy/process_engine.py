@@ -5,28 +5,42 @@ import shutil
 import logging
 from typing import Callable, List, Union, Any
 from nextflowpy.logger import logger
-from nextflowpy.types import path
 
 registered_processes = []
 _workflows = []
 
-# Global params dictionary
 params = {
     "workDir": ".nextflowpy/work",
     "publishDir": "results"
 }
 
-def resolve_paths(obj, work_dir):
-    if isinstance(obj, path):
-        original = obj.value
-        staged = os.path.join(work_dir, os.path.basename(original))
-        if not os.path.exists(staged):
-            os.symlink(os.path.abspath(original), staged)
-        return staged
+def is_pathlike(value):
+    return isinstance(value, str) and (
+        os.path.exists(value) or os.path.splitext(value)[1] in [".fastq", ".fq", ".gz", ".txt"]
+    )
+
+def stage_inputs(input_obj, work_dir):
+    if isinstance(input_obj, str) and is_pathlike(input_obj):
+        original_path = os.path.abspath(input_obj)
+        staged_path = os.path.join(work_dir, os.path.basename(original_path))
+        if not os.path.exists(staged_path):
+            if os.path.exists(original_path):
+                os.symlink(original_path, staged_path)
+        return staged_path
+    elif isinstance(input_obj, (list, tuple)):
+        return type(input_obj)(stage_inputs(x, work_dir) for x in input_obj)
+    elif isinstance(input_obj, dict):
+        return {k: stage_inputs(v, work_dir) for k, v in input_obj.items()}
+    else:
+        return input_obj
+
+def simplify_for_script(obj):
+    if isinstance(obj, str) and is_pathlike(obj):
+        return os.path.basename(obj)
     elif isinstance(obj, (list, tuple)):
-        return type(obj)(resolve_paths(x, work_dir) for x in obj)
+        return type(obj)(simplify_for_script(x) for x in obj)
     elif isinstance(obj, dict):
-        return {k: resolve_paths(v, work_dir) for k, v in obj.items()}
+        return {k: simplify_for_script(v) for k, v in obj.items()}
     else:
         return obj
 
@@ -47,9 +61,16 @@ class ProcessWrapper:
 
     def run_single(self, input_value: Any, **kwargs):
         logger.info(f"🔍 [{self.name}] Input: {input_value}")
+        work_hash = hashlib.md5((self.name + str(input_value)).encode()).hexdigest()
+        work_dir = os.path.join(params.get("workDir", ".nextflowpy/work"), work_hash)
+        os.makedirs(work_dir, exist_ok=True)
+        logger.info(f"📂 Workdir: {work_dir}")
+
+        staged_input = stage_inputs(input_value, work_dir)
+        simplified_input = simplify_for_script(staged_input)
 
         try:
-            result = self.func(input_value, **kwargs)
+            result = self.func(simplified_input, **kwargs)
         except Exception as e:
             logger.error(f"❌ Error in user function: {e}")
             return None
@@ -59,21 +80,6 @@ class ProcessWrapper:
             return None
 
         output, script = result
-
-        work_hash = hashlib.md5((self.name + str(input_value)).encode()).hexdigest()
-        work_dir = os.path.join(params.get("workDir", ".nextflowpy/work"), work_hash)
-        os.makedirs(work_dir, exist_ok=True)
-        logger.info(f"📂 Workdir: {work_dir}")
-
-        resolved_input = resolve_paths(input_value, work_dir)
-
-        frame = {}
-        if isinstance(resolved_input, dict):
-            frame.update(resolved_input)
-        elif isinstance(resolved_input, (list, tuple)):
-            frame.update({f"var{i}": v for i, v in enumerate(resolved_input)})
-        else:
-            frame["input"] = resolved_input
 
         script_path = os.path.join(work_dir, "script.sh")
         with open(script_path, "w") as f:
@@ -88,28 +94,23 @@ class ProcessWrapper:
             logger.error(f"❌ Script failed in {work_dir}: {e}")
             return None
 
-        output_items = output if isinstance(output, list) else [output]
         published = []
+        output_files = output if isinstance(output, list) else [output]
 
-        for item in output_items:
-            if isinstance(item, path):
-                file_name = os.path.basename(item.value)
-                full_output = os.path.join(work_dir, file_name)
-
-                if os.path.exists(full_output):
-                    logger.info(f"✅ Output found: {full_output}")
-
+        for item in output_files:
+            if isinstance(item, str) and os.path.splitext(item)[1]:
+                output_path = os.path.join(work_dir, os.path.basename(item))
+                if os.path.exists(output_path):
+                    logger.info(f"✅ Output found: {output_path}")
                     publish_dir = params.get("publishDir")
                     if publish_dir:
                         os.makedirs(publish_dir, exist_ok=True)
-                        dest = os.path.join(publish_dir, file_name)
-                        shutil.copy(full_output, dest)
+                        dest = os.path.join(publish_dir, os.path.basename(item))
+                        shutil.copy(output_path, dest)
                         logger.info(f"📦 Published to: {dest}")
-                    published.append(full_output)
+                    published.append(output_path)
                 else:
-                    logger.warning(f"⚠️ Expected output not found: {full_output}")
-            else:
-                logger.debug(f"ℹ️ Skipping non-path output: {item}")
+                    logger.warning(f"⚠️ Expected output not found: {output_path}")
 
         return published if len(published) > 1 else published[0] if published else None
 
