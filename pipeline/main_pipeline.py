@@ -1,5 +1,8 @@
-from nextflowpy.process_engine import workflow
+from nextflowpy.process_engine import workflow, params
 from pipeline.modules.fq_lint import FQ_LINT
+
+params["workDir"] = "work"
+params["publishDir"] = "results"
 
 @workflow
 def main():

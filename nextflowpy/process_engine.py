@@ -9,6 +9,12 @@ from nextflowpy.logger import logger
 registered_processes = []
 _workflows = []
 
+# Global params dictionary (can be overridden in main workflow)
+params = {
+    "workDir": ".nextflowpy/work",
+    "publishDir": "results"
+}
+
 class ProcessWrapper:
     def __init__(self, func: Callable, parallel: bool = True):
         self.func = func
@@ -33,7 +39,7 @@ class ProcessWrapper:
         output, script = result
 
         work_hash = hashlib.md5((self.name + str(input_value)).encode()).hexdigest()
-        work_dir = os.path.join(".nextflowpy", "work", work_hash)
+        work_dir = os.path.join(params.get("workDir", ".nextflowpy/work"), work_hash)
         os.makedirs(work_dir, exist_ok=True)
         logger.info(f"📂 Workdir: {work_dir}")
 
@@ -53,6 +59,13 @@ class ProcessWrapper:
         final_output = os.path.join(work_dir, os.path.basename(output))
         if os.path.exists(final_output):
             logger.info(f"✅ Output found: {final_output}")
+
+            publish_dir = params.get("publishDir")
+            if publish_dir:
+                os.makedirs(publish_dir, exist_ok=True)
+                destination = os.path.join(publish_dir, os.path.basename(output))
+                shutil.copy(final_output, destination)
+                logger.info(f"📦 Published to: {destination}")
         else:
             logger.warning(f"⚠️ Output missing: {final_output}")
 
