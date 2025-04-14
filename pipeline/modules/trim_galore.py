@@ -1,14 +1,14 @@
-import os
 from nextflowpy.process_engine import process
+from nextflowpy.utils.staged_path import path
 
 @process()
-def TRIMGALORE(fastq_file, args="--length 20"):
-    sample_id = os.path.basename(str(fastq_file)).split(".")[0]
-    output_file = f"{sample_id}.trimmed.fq.gz"
+def TRIMGALORE(meta_linted, args="--length 20"):
+    meta, linted_file = meta_linted
+    output_file = f"{meta['id']}.trimmed.fq.gz"
 
     script = f"""
-    echo trimming {fastq_file} with args: {args}
-    cp {fastq_file} {output_file}
+    echo trimming {linted_file} with args: {args}
+    cp {linted_file} {output_file}
     """
 
-    return output_file, script
+    return (meta, path(output_file)), script
