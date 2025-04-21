@@ -1,7 +1,7 @@
 from nextflowpy.process_engine import process
 from nextflowpy.utils.staged_path import path
 
-@process()
+@process(container="quay.io/biocontainers/fq:0.12.0--h9ee0642_0")
 def FQ_LINT(meta_fastq, args="--quiet"):
     meta, fastq_file = meta_fastq
     output_file = f"{meta['id']}.fq_lint.txt"

@@ -7,25 +7,18 @@ from typing import Callable, List, Union, Any, Tuple, Dict
 
 from nextflowpy.logger import logger
 from nextflowpy.utils.staged_path import StagedPath
-
-# Global config
-_global_params = {
-    "workDir": "work",
-    "publishDir": "results",
-    "stageInMode": "copy"  # or 'symlink'
-}
-
-def params(new_params: Dict[str, Any]):
-    _global_params.update(new_params)
+from nextflowpy.utils.container_executor import ContainerExecutor
+from nextflowpy.config import _global_params, params
 
 registered_processes = []
 _workflows = []
 
 class ProcessWrapper:
-    def __init__(self, func: Callable, parallel: bool = True):
+    def __init__(self, func: Callable, parallel: bool = True, container: str = None):
         self.func = func
         self.name = func.__name__
         self.parallel = parallel
+        self.container = container
         registered_processes.append(self)
 
     def __call__(self, input_data: Union[List[Any], Any], **kwargs):
@@ -63,9 +56,27 @@ class ProcessWrapper:
         logger.info(f"📝 Script:\n{script.strip()}")
         logger.info(f"📤 Output expected: {output}")
 
+        #Container support
+        command_to_run = "./.command.sh"
+        if self.container:
+            container_exec = ContainerExecutor(self.container)
+            command_to_run = container_exec.wrap_command("./.command.sh", work_dir)
+            logger.info(f"🐳 Running with container: {self.container}")
+
+        # Write .command.run
+        run_path = os.path.join(work_dir, ".command.run")
+        with open(run_path, "w") as f:
+            f.write(command_to_run + "\n")
+
+        # Write .command.env (optional, simple env snapshot)
+        env_path = os.path.join(work_dir, ".command.env")
+        with open(env_path, "w") as f:
+            for k, v in os.environ.items():
+                f.write(f"{k}={v}\n")
+
         # Run script
         try:
-            subprocess.run("./.command.sh", shell=True, check=True, cwd=work_dir)
+            subprocess.run(command_to_run, shell=True, check=True, cwd=work_dir)
         except subprocess.CalledProcessError as e:
             logger.error(f"❌ Script failed in {work_dir}: {e}")
             return None
@@ -124,9 +135,9 @@ class ProcessWrapper:
 
         return handle_output(output)
 
-def process(*, parallel: bool = True):
+def process(*, parallel: bool = True, container: str = None):
     def wrapper(func: Callable):
-        return ProcessWrapper(func, parallel=parallel)
+        return ProcessWrapper(func, parallel=parallel, container=container)
     return wrapper
 
 def workflow(func: Callable):

@@ -6,7 +6,8 @@ from pipeline.modules.trim_galore import TRIMGALORE
 params({
     "workDir": "workkkk",
     "publishDir": "resultssss",
-    "stageInMode": "copy"
+    "stageInMode": "copy",
+    "container": "auto"
 })
 
 @workflow
@@ -17,6 +18,6 @@ def main():
     ]
 
     linted = FQ_LINT(inputs, args="--quiet")
-    trimmed = TRIMGALORE(linted, args="--length 20")
+    #trimmed = TRIMGALORE(linted, args="--length 20")
 
 main()
